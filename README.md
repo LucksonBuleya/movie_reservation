@@ -3,7 +3,7 @@
 A Django REST API for booking movie tickets, managing showtimes, and handling seat reservations.
 
 ## Features
-- User authentication (JWT - coming next)
+- User authentication
 - Movie listing and details
 - Theater and seat management
 - Showtime scheduling

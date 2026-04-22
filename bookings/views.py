@@ -54,7 +54,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ✅ Cancel booking
+        # Cancel booking
         booking.status = 'CANCELLED'
         booking.save()
 
