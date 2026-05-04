@@ -1,60 +1,84 @@
 from rest_framework import serializers
-from .models import BookedSeat, Booking
-from theaters.models import Seat
+from .models import Booking, BookedSeat
 from movies.models import Showtime
+from theaters.models import Seat
+
 
 class BookingSerializer(serializers.ModelSerializer):
-    # User will send a list of seat IDs
+    # Accepts a list of seat IDs from the client (write-only)
     seats = serializers.ListField(
-        child=serializers.IntegerField(),
-        write_only=True
+        child=serializers.IntegerField(), write_only=True
     )
 
     class Meta:
         model = Booking
+        # total_price is computed automatically, not provided by user
         fields = ['id', 'showtime', 'seats', 'total_price', 'status', 'created_at']
-        read_only_fields = ['status', 'created_at']
+        read_only_fields = ['total_price', 'status', 'created_at']
 
     def validate(self, data):
         """
-        This runs BEFORE creating the booking.
-        Used to check if seats are already taken.
+        Custom validation to ensure:
+        1. Seats belong to the correct theater
+        2. Seats are not already booked for this showtime
         """
-
         showtime = data['showtime']
         seat_ids = data['seats']
 
-        # Get all seats from DB
-        seats = Seat.objects.filter(id__in=seat_ids)
+        # Get all valid seats for the selected showtime's theater
+        valid_seats = Seat.objects.filter(theater=showtime.theater)
 
-        # Check if all seats exist
-        if len(seats) != len(seat_ids):
-            raise serializers.ValidationError("One or more seats do not exist.")
-        
-        # Check if any seat is already booked for this showtime (CORE LOGIC)
-        for seat in seats:
-            if BookedSeat.objects.filter(seat=seat, showtime=showtime).exists():
+        # Ensure each selected seat exists in this theater
+        for seat_id in seat_ids:
+            if not valid_seats.filter(id=seat_id).exists():
                 raise serializers.ValidationError(
-                    f"Seat {seat} is already booked for this showtime."
-                )            
+                    f"Seat {seat_id} does not belong to this theater."
+                )
+
+        # Check if any of the selected seats are already booked
+        already_booked = BookedSeat.objects.filter(
+            showtime=showtime,
+            seat_id__in=seat_ids
+        ).values_list('seat_id', flat=True)
+
+        if already_booked:
+            raise serializers.ValidationError(
+                f"Seats already booked: {list(already_booked)}"
+            )
+
         return data
-    
+
     def create(self, validated_data):
         """
-        This runs AFTER validation passes.
-        We create the booking and link seats
+        Handles booking creation:
+        - Calculates total price
+        - Creates booking record
+        - Creates associated booked seats
         """
+        # Extract seat IDs from request data
         seat_ids = validated_data.pop('seats')
-        user = self.context['request'].user     #Get logged-in user (automatically)
+        showtime = validated_data['showtime']
 
-        # Create booking first
-        booking = Booking.objects.create(user=user, **validate_data)
+        # Get currently authenticated user
+        user = self.context['request'].user
 
-        # Create BookedSeat entries for each seat
+        # Business Logic: Calculate total price automatically
+        price_per_seat = showtime.price
+        total_price = len(seat_ids) * price_per_seat
+
+        # Create booking record
+        booking = Booking.objects.create(
+            user=user,
+            showtime=showtime,
+            total_price=total_price
+        )
+
+        # Create a BookedSeat entry for each selected seat
         for seat_id in seat_ids:
             BookedSeat.objects.create(
                 booking=booking,
                 seat_id=seat_id,
-                showtime=booking.showtime
+                showtime=showtime
             )
+
         return booking
